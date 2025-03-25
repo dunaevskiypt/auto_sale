@@ -10,7 +10,7 @@ class SprintParser(scrapy.Spider):
     ]
 
     def parse(self, response):
-        # Parse only brand, model, year, generation, price, mileage, location, fuel type, transmission, and engine capacity
+        # Parse only brand, model, year, generation, price, mileage, location, fuel type, transmission, engine capacity, state number, VIN
         for item in response.css("section.ticket-item"):
             # Extract title attribute to get brand, model, and year
             title = item.css("a.address::attr(title)").get()
@@ -44,8 +44,7 @@ class SprintParser(scrapy.Spider):
             if mileage_text:
                 mileage_match = re.search(r"(\d+)\s*тис\. км", mileage_text)
                 if mileage_match:
-                    mileage = int(mileage_match.group(1)) * \
-                        1000  # Convert to actual mileage
+                    mileage = int(mileage_match.group(1)) * 1000
                 else:
                     mileage = None
             else:
@@ -93,10 +92,25 @@ class SprintParser(scrapy.Spider):
             ).getall()
             if location:
                 location = " ".join(location).strip()
-                location = re.sub(r"\s*\(.*?\)\s*|\)$", "",
-                                  location)  # Clean up location
+                location = re.sub(r"\s*\(.*?\)\s*|\)$", "", location)
             else:
                 location = None
+
+            # Extract state number (remove spaces)
+            state_number = item.css(
+                "div.base_information span.state-num::text").get()
+            if state_number:
+                state_number = state_number.strip().replace(" ", "")
+            else:
+                state_number = None
+
+            # Extract VIN code
+            vin_code = item.css(
+                "div.base_information span.label-vin span::text").get()
+            if vin_code:
+                vin_code = vin_code.strip()
+            else:
+                vin_code = None
 
             # Prepare and yield the data
             data = {
@@ -110,6 +124,8 @@ class SprintParser(scrapy.Spider):
                 "fuel_type": fuel_type,
                 "transmission": transmission,
                 "engine_capacity": engine_capacity,
-                "location": location
+                "location": location,
+                "state_number": state_number,
+                "vin_code": vin_code
             }
             yield data
