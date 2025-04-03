@@ -10,7 +10,7 @@ class SprintParser(scrapy.Spider):
     allowed_domains = ["auto.ria.com"]
 
     def __init__(self):
-        self.file = open("car_data.json", "wb")
+        self.file = open("sprint_data.json", "wb")
         self.exporter = JsonItemExporter(
             self.file, ensure_ascii=False, indent=4)
         self.exporter.start_exporting()

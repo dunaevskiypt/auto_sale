@@ -3,7 +3,7 @@ from scrapy.exporters import JsonItemExporter
 
 
 class CarDataSpider(scrapy.Spider):
-    name = "car_data"  # Название для запуска через scrapy crawl car_data
+    name = "car_parser"  # Название для запуска через scrapy crawl car_data
     allowed_domains = ["auto.ria.com"]
     start_urls = ["https://auto.ria.com/uk/legkovie/?page=1"]
 
