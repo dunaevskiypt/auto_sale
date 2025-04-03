@@ -17,7 +17,7 @@ class SprintParser(scrapy.Spider):
 
     def start_requests(self):
         base_url = "https://auto.ria.com/uk/search/?lang_id=4&page={page}&countpage=100&category_id=1&custom=1&abroad=2"
-        for page in range(0, 30):
+        for page in range(0, 3090):
             url = base_url.format(page=page)
             yield scrapy.Request(url, callback=self.parse)
 
@@ -110,7 +110,14 @@ class SprintParser(scrapy.Spider):
     def extract_location(self, item):
         location = item.xpath(
             ".//li[contains(@class, 'js-location')]//text()[normalize-space()]").getall()
-        return " ".join(location).strip() if location else None
+        location_text = " ".join(location).strip() if location else None
+
+        if location_text:
+            # Убираем все лишние символы, включая "(", ")", и другие ненужные части
+            location_text = re.sub(r"[^\w\s]", "", location_text)
+            location_text = location_text.split("від")[0].strip()
+
+        return location_text
 
     def extract_dates(self, item):
         add_date = self.extract_text(
