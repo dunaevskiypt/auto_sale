@@ -1,31 +1,24 @@
 import scrapy
-import re
-import json
 from datetime import datetime
-from scrapy.exporters import JsonItemExporter
+import re
+from sqlalchemy.orm import sessionmaker
+from car_scraper.models import Car, Location, SaleStatus, Accident, SessionLocal
 
 
 class SprintParser(scrapy.Spider):
     name = "sprint_spider"
     allowed_domains = ["auto.ria.com"]
 
-    def __init__(self):
-        self.file = open("sprint_data.json", "wb")
-        self.exporter = JsonItemExporter(
-            self.file, ensure_ascii=False, indent=4)
-        self.exporter.start_exporting()
-
     def start_requests(self):
         base_url = "https://auto.ria.com/uk/search/?lang_id=4&page={page}&countpage=100&category_id=1&custom=1&abroad=2"
-        for page in range(0, 3090):
+        for page in range(0, 30):
             url = base_url.format(page=page)
             yield scrapy.Request(url, callback=self.parse)
 
     def parse(self, response):
         for item in response.css("section.ticket-item"):
             data = self.extract_data(item)
-            self.exporter.export_item(data)
-            yield data
+            yield data  # данные передаются в pipeline для записи в БД
 
     def extract_data(self, item):
         title = item.css("a.address::attr(title)").get()
@@ -113,7 +106,6 @@ class SprintParser(scrapy.Spider):
         location_text = " ".join(location).strip() if location else None
 
         if location_text:
-            # Убираем все лишние символы, включая "(", ")", и другие ненужные части
             location_text = re.sub(r"[^\w\s]", "", location_text)
             location_text = location_text.split("від")[0].strip()
 
@@ -140,7 +132,3 @@ class SprintParser(scrapy.Spider):
         sold_date = self.extract_text(
             item, "span[data-sold-date]::attr(data-sold-date)")
         return ("sold", datetime.strptime(sold_date, "%Y-%m-%d %H:%M:%S")) if sold_date else ("on_sale", None)
-
-    def close(self, reason):
-        self.exporter.finish_exporting()
-        self.file.close()
