@@ -35,7 +35,7 @@ class SprintParser(scrapy.Spider):
 
             # Request pages for each category
             # Set a reasonable page limit based on the category (e.g., 3200 for cars, 200 for motorbikes)
-            page_limit = 3200 if category_id == 1 else 200  # Adjust this limit per category
+            page_limit = 320 if category_id == 1 else 200  # Adjust this limit per category
             for page in range(0, page_limit + 1):
                 url = base_url.format(page=page, category_id=category_id)
                 yield scrapy.Request(url, callback=self.parse_page, dont_filter=True, cb_kwargs={"category_id": category_id})
