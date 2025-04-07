@@ -9,66 +9,38 @@ class SprintParser(scrapy.Spider):
     allowed_domains = ["auto.ria.com"]
 
     def __init__(self):
-        # Create a dictionary to store exporters for each category
-        self.exporters = {}
-        self.empty_pages_count = {}  # To track empty pages for each category
+        self.exporter = None
+        self.file = None
+        self.empty_pages_count = 0
 
     def start_requests(self):
-        # List of categories with ids and names
-        category_ids = {
-            1: "cars",  # Cars
-            2: "motorbikes",  # Motorbikes
-            6: "trucks",  # Trucks
-            7: "buses"  # Buses
-        }
+        self.file = open("sprint_data_cars.json", "wb")
+        self.exporter = JsonItemExporter(
+            self.file, ensure_ascii=False, indent=4)
+        self.exporter.start_exporting()
 
-        base_url = "https://auto.ria.com/uk/search/?lang_id=4&page={page}&countpage=100&category_id={category_id}&custom=1&abroad=2"
+        # Жестко прописанный URL для категории "cars"
+        for page in range(0, 3089):  # Можно изменить лимит страниц здесь
+            url = f"https://auto.ria.com/uk/search/?lang_id=4&page={page}&countpage=100&category_id=1&custom=1&abroad=2"
+            yield scrapy.Request(url, callback=self.parse_page)
 
-        # Initialize exporters for each category
-        for category_id, category_name in category_ids.items():
-            file = open(f"sprint_data_{category_name}.json", "wb")
-            exporter = JsonItemExporter(file, ensure_ascii=False, indent=4)
-            exporter.start_exporting()
-            self.exporters[category_id] = (exporter, file)
-            # Initialize empty page count for each category
-            self.empty_pages_count[category_id] = 0
-
-            # Request pages for each category
-            # Set a reasonable page limit based on the category (e.g., 3200 for cars, 200 for motorbikes)
-            page_limit = 320 if category_id == 1 else 200  # Adjust this limit per category
-            for page in range(0, page_limit + 1):
-                url = base_url.format(page=page, category_id=category_id)
-                yield scrapy.Request(url, callback=self.parse_page, dont_filter=True, cb_kwargs={"category_id": category_id})
-
-    def parse_page(self, response, category_id):
+    def parse_page(self, response):
         items = response.css("section.ticket-item")
 
-        # Check if the page is empty (no items)
         if not items:
-            self.empty_pages_count[category_id] += 1
+            self.empty_pages_count += 1
             self.logger.info(
-                f"Page {response.url} is empty. Empty pages in category {category_id}: {self.empty_pages_count[category_id]}"
-            )
-
-            # If we encounter 50 consecutive empty pages, stop parsing for this category
-            if self.empty_pages_count[category_id] >= 50:
-                self.logger.info(
-                    f"More than 50 consecutive empty pages in category {category_id}, moving to next category."
-                )
-                # Skip to the next category (don't stop the entire spider)
+                f"Page {response.url} is empty. Total empty: {self.empty_pages_count}")
+            if self.empty_pages_count >= 50:
+                self.logger.info("Too many empty pages. Stopping.")
                 return
-
         else:
-            # Reset empty page count if items are found
-            self.empty_pages_count[category_id] = 0
-
-        # Get the exporter for this category
-        exporter, _ = self.exporters[category_id]
+            self.empty_pages_count = 0
 
         for item in items:
             data = self.extract_data(item)
-            data["category_id"] = category_id  # Add category_id to each record
-            exporter.export_item(data)
+            data["category_id"] = 1
+            self.exporter.export_item(data)
             yield data
 
     def extract_data(self, item):
@@ -134,24 +106,84 @@ class SprintParser(scrapy.Spider):
         return int(mileage_match.group(1)) * 1000 if mileage_match else None
 
     def extract_characteristics(self, item):
-        characteristics = item.css(
-            "ul.unstyle.characteristic li.item-char::text").getall()
+        # Попытка извлечь характеристики из ul с характеристиками
         fuel_type, transmission, engine_capacity = None, None, None
-        for char in characteristics:
-            char = char.strip()
-            if char in ["Бензин", "Дизель", "Газ", "Електро"]:
-                fuel_type = char
-            engine_match = re.search(r"(\d+[.,]?\d*)\s*л\.", char)
-            if engine_match:
-                engine_capacity = int(
-                    float(engine_match.group(1).replace(',', '.')) * 1000)
-            if char in ["Автомат", "Механіка", "Варіатор"]:
-                transmission = char
+        chars = item.css(
+            "ul.unstyle.characteristic li.item-char::text").getall()
+        chars = [c.strip() for c in chars if c.strip()]
+        for c in chars:
+            # Если строка содержит запятую, разделяем на части (например, "Дизель, 4.46 л.")
+            if "," in c:
+                parts = [p.strip() for p in c.split(",")]
+                for part in parts:
+                    if part in ["Бензин", "Дизель", "Газ", "Електро",
+                                "Газ пропан-бутан / Бензин", "Газ метан / Бензин",
+                                "Гібрид (HEV)", "Гібрид (PHEV)", "Гібрид (MHEV)"]:
+                        fuel_type = part
+                    engine_match = re.search(r"(\d+[.,]?\d*)\s*л", part)
+                    if engine_match:
+                        engine_capacity = int(
+                            float(engine_match.group(1).replace(',', '.')) * 1000)
+                    if not transmission and "автомат" in part.lower():
+                        transmission = part
+                    if not transmission and "механ" in part.lower():
+                        transmission = part
+                    if not transmission and "варіатор" in part.lower():
+                        transmission = part
+                    # Добавление новых типов КПП
+                    if not transmission and "ручна" in part.lower():
+                        transmission = part
+                    if not transmission and "типтронік" in part.lower():
+                        transmission = part
+                    if not transmission and "робот" in part.lower():
+                        transmission = part
+            else:
+                if c in ["Бензин", "Дизель", "Газ", "Електро",
+                         "Газ пропан-бутан / Бензин", "Газ метан / Бензин",
+                         "Гібрид (HEV)", "Гібрид (PHEV)", "Гібрид (MHEV)"]:
+                    fuel_type = c
+                engine_match = re.search(r"(\d+[.,]?\d*)\s*л", c)
+                if engine_match:
+                    engine_capacity = int(
+                        float(engine_match.group(1).replace(',', '.')) * 1000)
+                if not transmission and ("автомат" in c.lower() or "механ" in c.lower() or "варіатор" in c.lower()):
+                    transmission = c
+                # Добавление новых типов КПП
+                if not transmission and "ручна" in c.lower():
+                    transmission = c
+                if not transmission and "типтронік" in c.lower():
+                    transmission = c
+                if not transmission and "робот" in c.lower():
+                    transmission = c
+
+        # Если что-то не найдено, пробуем дополнительно из блока structure-row
+        if not (fuel_type and transmission and engine_capacity):
+            block = item.css(
+                "div.structure-row.ai-center.gap-8.flex-1 *::text").getall()
+            for char in block:
+                char = char.strip()
+                if not fuel_type and char in ["Бензин", "Дизель", "Газ", "Електро",
+                                              "Газ пропан-бутан / Бензин", "Газ метан / Бензин",
+                                              "Гібрид (HEV)", "Гібрид (PHEV)", "Гібрид (MHEV)"]:
+                    fuel_type = char
+                if not transmission and ("автомат" in char.lower() or "механ" in char.lower() or "варіатор" in char.lower()):
+                    transmission = char
+                if not transmission and "ручна" in char.lower():
+                    transmission = char
+                if not transmission and "типтронік" in char.lower():
+                    transmission = char
+                if not transmission and "робот" in char.lower():
+                    transmission = char
+                engine_match = re.search(r"(\d+[.,]?\d*)\s*л", char)
+                if engine_match and not engine_capacity:
+                    engine_capacity = int(
+                        float(engine_match.group(1).replace(',', '.')) * 1000)
         return fuel_type, transmission, engine_capacity
 
     def extract_location(self, item):
         location = item.xpath(
-            ".//li[contains(@class, 'js-location')]//text()[normalize-space()]").getall()
+            ".//li[contains(@class, 'js-location')]//text()[normalize-space()]"
+        ).getall()
         location_text = " ".join(location).strip() if location else None
         if location_text:
             location_text = re.sub(r"[^\w\s]", "", location_text)
@@ -163,8 +195,12 @@ class SprintParser(scrapy.Spider):
             item, "span[data-add-date]::attr(data-add-date)")
         update_date = self.extract_text(
             item, "span[data-update-date]::attr(data-update-date)")
-        return (datetime.strptime(add_date, "%Y-%m-%d %H:%M:%S") if add_date else None,
-                datetime.strptime(update_date, "%Y-%m-%d %H:%M:%S") if update_date else None)
+        return (
+            datetime.strptime(
+                add_date, "%Y-%m-%d %H:%M:%S") if add_date else None,
+            datetime.strptime(
+                update_date, "%Y-%m-%d %H:%M:%S") if update_date else None
+        )
 
     def extract_accident_status(self, item):
         accident = self.extract_text(item, "span.state._red::text")
@@ -181,7 +217,6 @@ class SprintParser(scrapy.Spider):
         return ("sold", datetime.strptime(sold_date, "%Y-%m-%d %H:%M:%S")) if sold_date else ("on_sale", None)
 
     def close(self, reason):
-        # Close all files and exporters for each category
-        for exporter, file in self.exporters.values():
-            exporter.finish_exporting()
-            file.close()
+        if self.exporter and self.file:
+            self.exporter.finish_exporting()
+            self.file.close()
